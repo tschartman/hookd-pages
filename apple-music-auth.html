@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connect Apple Music</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+      background: #0a0a0a;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      padding: 24px;
+    }
+    .logo { font-size: 32px; font-weight: 800; letter-spacing: 4px; color: #fc3c44; }
+    .subtitle { font-size: 16px; color: rgba(255,255,255,0.6); text-align: center; }
+    .status { font-size: 14px; color: rgba(255,255,255,0.4); text-align: center; min-height: 20px; }
+    .error { color: #ff4444; }
+  </style>
+</head>
+<body>
+  <div class="logo">HOOKD</div>
+  <p class="subtitle">Connecting to Apple Music…</p>
+  <p class="status" id="status">Loading…</p>
+
+  <script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js"></script>
+  <script>
+    // Read platform_redirect from the URL query string
+    const params = new URLSearchParams(window.location.search);
+    const PLATFORM_REDIRECT = params.get('platform_redirect');
+
+    // Your Supabase apple-music-token Edge Function URL
+    const TOKEN_ENDPOINT = 'https://fwxabcprpuxbktdqwmkx.supabase.co/functions/v1/apple-music-token';
+
+    function setStatus(msg, isError) {
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      if (isError) el.classList.add('error');
+    }
+
+    function redirectWithError(message) {
+      if (PLATFORM_REDIRECT) {
+        const dest = PLATFORM_REDIRECT + '?error=' + encodeURIComponent(message);
+        setTimeout(() => { window.location.href = dest; }, 2000);
+      }
+    }
+
+    async function run() {
+      if (!PLATFORM_REDIRECT) {
+        setStatus('Error: Missing redirect parameter', true);
+        return;
+      }
+
+      try {
+        // Step 1: Fetch developer token from Supabase Edge Function
+        setStatus('Fetching developer token…');
+        const tokenRes = await fetch(TOKEN_ENDPOINT);
+        if (!tokenRes.ok) {
+          throw new Error('Failed to get developer token (HTTP ' + tokenRes.status + ')');
+        }
+        const tokenData = await tokenRes.json();
+        const developerToken = tokenData.token;
+
+        if (!developerToken) {
+          throw new Error('No token in response');
+        }
+
+        // Step 2: Configure MusicKit
+        setStatus('Configuring MusicKit…');
+        await MusicKit.configure({
+          developerToken: developerToken,
+          app: { name: 'HOOKD', build: '1' },
+        });
+
+        // Step 3: Authorize
+        setStatus('Requesting authorization…');
+        const music = MusicKit.getInstance();
+        const musicUserToken = await music.authorize();
+
+        // Step 4: Redirect back to app with token
+        setStatus('Authorized! Returning to app…');
+        const dest = PLATFORM_REDIRECT + '?music-token=' + encodeURIComponent(musicUserToken);
+        window.location.href = dest;
+
+      } catch (err) {
+        console.error('MusicKit auth error:', err);
+        setStatus('Error: ' + (err.message || String(err)), true);
+        redirectWithError(err.message || 'Authorization failed');
+      }
+    }
+
+    // MusicKit v3 loads async — wait for the script to be ready
+    if (window.MusicKit) {
+      run();
+    } else {
+      document.querySelector('script[src*="musickit"]').addEventListener('load', run);
+    }
+  </script>
+</body>
+</html>
